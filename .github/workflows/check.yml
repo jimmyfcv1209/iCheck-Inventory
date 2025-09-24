@@ -1,0 +1,58 @@
+name: iPhone Pickup Check
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Playwright + deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install playwright python-dateutil requests
+          python -m playwright install --with-deps chromium
+
+      - name: Run checker (writes docs/data/latest.json)
+        env:
+          ZIP_CODES: "33172"
+          PART_NOTES: "iPhone 17 Pro Max 256GB (any color)"
+          LOCAL_TZ: "America/Tegucigalpa"
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+          SLACK_WEBHOOK:      ${{ secrets.SLACK_WEBHOOK }}
+        run: |
+          python inventory_check.py
+          echo "JSON written to docs/data/latest.json"
+
+      - name: Commit & push data (only if changed)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain docs/data)" ]; then
+            git add docs/data
+            git commit -m "Update results ($(date -u +'%Y-%m-%d %H:%M:%S') UTC)"
+            git push
+          else
+            echo "No changes to commit."
+          fi
+
+      - name: Summary
+        run: |
+          echo "### Last run" >> $GITHUB_STEP_SUMMARY
+          echo '' >> $GITHUB_STEP_SUMMARY
+          cat docs/data/last.txt >> $GITHUB_STEP_SUMMARY
