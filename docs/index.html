@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>iPhone Pickup Checker</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="stylesheet" href="assets/style.css" />
+</head>
+<body>
+  <div class="wrap">
+    <h1>iPhone Pickup Checker</h1>
+    <p class="muted">Auto-refreshes every 60s. Data source: <code>docs/data/latest.json</code></p>
+
+    <div id="meta" class="card"></div>
+
+    <table id="table" class="hidden">
+      <thead>
+        <tr>
+          <th>ZIP</th>
+          <th>Store</th>
+          <th>Available</th>
+          <th>Message</th>
+        </tr>
+      </thead>
+      <tbody id="rows"></tbody>
+    </table>
+
+    <div id="empty" class="muted hidden">No results yet.</div>
+    <p class="muted">Spanish version: <a href="es/">/es/</a></p>
+  </div>
+
+<script>
+async function load() {
+  try {
+    const res = await fetch('data/latest.json?_=' + Date.now(), {cache: 'no-store'});
+    const j = await res.json();
+
+    const notes = j.errors && j.errors.length ? `<div class="warn"><b>Notes:</b> ${j.errors.join(' • ')}</div>` : '';
+    document.getElementById('meta').innerHTML =
+      `<div><b>When:</b> ${j.timestamp}</div>
+       <div><b>Looking for:</b> ${j.part_notes}</div>
+       <div><b>ZIPs:</b> ${j.zips.join(', ')}</div>
+       ${notes}`;
+
+    const body = document.getElementById('rows');
+    body.innerHTML = '';
+    if (!j.rows || !j.rows.length) {
+      document.getElementById('table').classList.add('hidden');
+      document.getElementById('empty').classList.remove('hidden');
+      return;
+    }
+    document.getElementById('empty').classList.add('hidden');
+    document.getElementById('table').classList.remove('hidden');
+
+    j.rows.sort((a,b)=> (b.available - a.available) || (a.store||'').localeCompare(b.store||''));
+    for (const r of j.rows) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td>${r.zip}</td>
+        <td>${r.store || ''}</td>
+        <td>${r.available ? '<span class="yes">YES</span>' : '<span class="no">no</span>'}</td>
+        <td>${r.message || ''}</td>`;
+      body.appendChild(tr);
+    }
+  } catch (e) {
+    document.getElementById('meta').innerHTML = `<div class="warn">Failed to load data: ${e}</div>`;
+  }
+}
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>
