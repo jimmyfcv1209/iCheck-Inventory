@@ -190,7 +190,7 @@ def run_once() -> dict:
                 out["rows"].extend(rows)
                 hits = [r for r in rows if r["available"]]
                 if hits:
-                    text = f"📱 Pickup available [{z}] — " + \"; \".join(f\"{h['store']} ({h['message']})\" for h in hits)
+                    text = f"📱 Pickup available [{z}] – " + "; ".join(f"{h['store']} ({h['message']})" for h in hits)
                     logging.info(text)
                     notify(text)
             except Exception as e:
