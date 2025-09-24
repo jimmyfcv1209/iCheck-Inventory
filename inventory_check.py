@@ -1,4 +1,6 @@
-import os, time, logging, json
+import os
+import logging
+import json
 from datetime import datetime
 from dateutil import tz
 import requests
@@ -18,18 +20,24 @@ BUY_PAGE = "https://www.apple.com/shop/buy-iphone/iphone-17-pro/6.9-inch-display
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
-def notify(text: str):
+
+def notify(text: str) -> None:
+    """Send a message to Slack and/or Telegram (best effort)."""
     try:
         if SLACK_WEBHOOK:
             requests.post(SLACK_WEBHOOK, json={"text": text}, timeout=10)
+    except Exception as e:
+        logging.warning(f"Slack notify failed: {e}")
+    try:
         if TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID:
             requests.get(
                 f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
                 params={"chat_id": TELEGRAM_CHAT_ID, "text": text},
-                timeout=10
+                timeout=10,
             )
     except Exception as e:
-        logging.warning(f"Notify failed: {e}")
+        logging.warning(f"Telegram notify failed: {e}")
+
 
 def safe_click(page, selector: str, timeout_ms: int = 3000) -> bool:
     try:
@@ -43,7 +51,9 @@ def safe_click(page, selector: str, timeout_ms: int = 3000) -> bool:
     except Exception:
         return False
 
-def dismiss_overlays(page):
+
+def dismiss_overlays(page) -> None:
+    """Close cookie/region overlays that sometimes block clicks."""
     for sel in [
         "button:has-text('Accept')",
         "button:has-text('Allow all')",
@@ -56,7 +66,9 @@ def dismiss_overlays(page):
     ]:
         safe_click(page, sel, 1200)
 
+
 def open_modal(page) -> bool:
+    """Open the 'Check availability' modal."""
     triggers = [
         "button[data-autom^='productLocatorTriggerLink_']",
         "button.rf-pickup-quote-overlay-trigger",
@@ -65,8 +77,11 @@ def open_modal(page) -> bool:
         "text=Check availability",
         "text=Check store availability",
     ]
+    # Scroll to trigger lazy load
     for _ in range(6):
-        page.mouse.wheel(0, 1000); page.wait_for_timeout(150)
+        page.mouse.wheel(0, 1000)
+        page.wait_for_timeout(150)
+    # Try normal clicks
     for sel in triggers:
         try:
             page.wait_for_selector(sel, state="visible", timeout=3000)
@@ -74,22 +89,33 @@ def open_modal(page) -> bool:
                 return True
         except Exception:
             continue
+    # Last resort: JS click
     try:
-        return page.evaluate("""
-        () => {
-          const sels = [
-            "button[data-autom^='productLocatorTriggerLink_']",
-            "button.rf-pickup-quote-overlay-trigger",
-            "[data-autom='pickup-cta']"
-          ];
-          for (const s of sels) { const b = document.querySelector(s); if (b) { b.click(); return true; } }
-          return false;
-        }""")
+        return page.evaluate(
+            """
+            () => {
+              const sels = [
+                "button[data-autom^='productLocatorTriggerLink_']",
+                "button.rf-pickup-quote-overlay-trigger",
+                "[data-autom='pickup-cta']"
+              ];
+              for (const s of sels) {
+                const b = document.querySelector(s);
+                if (b) { b.click(); return true; }
+              }
+              return false;
+            }
+            """
+        )
     except Exception:
         return False
 
+
 def read_results(page, zip_code: str):
+    """Type ZIP, wait for results, and parse store rows."""
     rows = []
+
+    # Find ZIP input
     inputs = [
         "input[name='location']",
         "[data-autom='fulfillmentLocationInput']",
@@ -107,11 +133,14 @@ def read_results(page, zip_code: str):
 
     field.fill("")
     field.type(zip_code, delay=40)
-    try: field.press("Enter")
-    except Exception: pass
+    try:
+        field.press("Enter")
+    except Exception:
+        pass
 
     page.wait_for_timeout(1700)
 
+    # Container with results
     containers = [
         "[data-autom='fulfillment-messages']",
         "[data-autom='fulfillment-pickup']",
@@ -126,6 +155,7 @@ def read_results(page, zip_code: str):
     if container is None:
         return rows
 
+    # Store blocks
     store_blocks = container.locator(
         "[data-autom='store'], .rf-storelocator-store, [data-autom='fulfillment-store'], li.rf-store"
     )
@@ -133,7 +163,9 @@ def read_results(page, zip_code: str):
     for i in range(count):
         sb = store_blocks.nth(i)
         try:
-            name = sb.locator("[data-autom='storeName'], .rf-storelocator-name, .store-name").first.inner_text(timeout=1500)
+            name = sb.locator(
+                "[data-autom='storeName'], .rf-storelocator-name, .store-name"
+            ).first.inner_text(timeout=1500)
         except Exception:
             name = "(unknown store)"
 
@@ -142,7 +174,7 @@ def read_results(page, zip_code: str):
             "[data-autom='fulfillment-message']",
             ".rf-pickup-quote",
             ".rf-availability",
-            ".as-purchaseinfo-message"
+            ".as-purchaseinfo-message",
         ]:
             loc = sb.locator(sel)
             if loc.count() > 0:
@@ -152,13 +184,16 @@ def read_results(page, zip_code: str):
                 except Exception:
                     pass
 
-        rows.append({
-            "zip": zip_code,
-            "store": name,
-            "available": "available" in (msg or "").lower(),
-            "message": (msg or "").strip(),
-        })
+        rows.append(
+            {
+                "zip": zip_code,
+                "store": name,
+                "available": "available" in (msg or "").lower(),
+                "message": (msg or "").strip(),
+            }
+        )
     return rows
+
 
 def run_once() -> dict:
     tzinfo = tz.gettz(LOCAL_TZ)
@@ -167,7 +202,7 @@ def run_once() -> dict:
         "part_notes": PART_NOTES,
         "zips": ZIP_CODES,
         "rows": [],
-        "errors": []
+        "errors": [],
     }
 
     with sync_playwright() as p:
@@ -179,9 +214,13 @@ def run_once() -> dict:
         dismiss_overlays(page)
         if not open_modal(page):
             out["errors"].append("Could not open availability modal")
-            try: os.makedirs("docs/data", exist_ok=True); page.screenshot(path="docs/data/page_no_modal.png", full_page=True)
-            except Exception: pass
-            ctx.close(); browser.close()
+            try:
+                os.makedirs("docs/data", exist_ok=True)
+                page.screenshot(path="docs/data/page_no_modal.png", full_page=True)
+            except Exception:
+                pass
+            ctx.close()
+            browser.close()
             return out
 
         for z in ZIP_CODES:
@@ -190,15 +229,20 @@ def run_once() -> dict:
                 out["rows"].extend(rows)
                 hits = [r for r in rows if r["available"]]
                 if hits:
-                    text = f"📱 Pickup available [{z}] – " + "; ".join(f"{h['store']} ({h['message']})" for h in hits)
+                    # Clean f-string — single quotes inside double quotes (no escapes)
+                    text = f"📱 Pickup available [{z}] – " + "; ".join(
+                        f"{h['store']} ({h['message']})" for h in hits
+                    )
                     logging.info(text)
                     notify(text)
             except Exception as e:
-                out["errors"].append(f\"{z}: {e}\")
+                out["errors"].append(f"{z}: {e}")
 
-        ctx.close(); browser.close()
+        ctx.close()
+        browser.close()
 
     return out
+
 
 if __name__ == "__main__":
     data = run_once()
